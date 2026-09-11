@@ -220,7 +220,7 @@ used again:
 
 ```
 ################################################################
-#   audit.py - A small collection of Keysight Auditing Tools   #
+#   audit.py - A small collection of useful Auditing Tools     #
 #   Ver: 0.8 - Author: CM                                      #
 ################################################################
 
