@@ -219,23 +219,29 @@ Enter a domain (or IP): example.com
 [*] Target set to example.com (logs -> /home/user/audit_logs/example.com)
 
 -- Recon --
-1) Port audit (masscan+nmap, 65k ports)
-2) Ping sweep (ICMP/SYN/ACK/UDP)
+  1) Port audit ................ superfast port/service scanner
+  2) Ping sweep ................ various checks to see if a host is alive
+
 -- Protocol --
-3) SSH audit
-4) SSL/TLS audit
-5) RDP audit
-6) SMB enumeration
+  3) SSH audit ................. ciphers, kex, MACs, auth methods, SSHv1 check
+  4) SSL/TLS audit ............. cert chain, protocol & cipher checks
+  5) RDP audit ................. security layer, encryption level & NLA check
+  6) SMB enumeration ........... anon/null-session shares & user enum
+
 -- Web/App --
-7) Web tech fingerprint
-8) Web vuln scan (nikto/nuclei)
-9) SQLMap injection audit
+  7) Web tech fingerprint ...... LB/WAF detection + tech stack ID
+  8) Web vuln scan ............. automated web vuln scan using Nikto/Nuclei
+  9) SQLMap injection audit .... crawls forms, tests for SQL injection
+
 -- Crypto --
-10) Quantum-readiness (PQC) audit
+ 10) Quantum-readiness audit ... TLS/SSH PQC readiness check
+
+-- Source Code --
+ 11) GitHub secret scan ........ finds leaked API keys/creds
+
 -- Options --
-t) Set/change target (current: example.com)
+t) Set/change target (current: (not set))
 q) Exit
-```
 
 Root/sudo is only requested for the raw-socket / privileged tools (nmap
 scans that need it, masscan, low-level SMB probes) via `sudo_wrap()` — and
