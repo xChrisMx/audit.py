@@ -34,6 +34,9 @@ option until changed. Options are grouped by category:
 **Crypto**
 - Quantum-readiness (PQC) audit — see below
 
+**Source Code**
+- GitHub repo secret scan — see below
+
 Every option calls `get_target()` first, so the first menu choice in a
 session prompts for a target; every one after that reuses it until `t` is
 used to change it.
@@ -96,6 +99,71 @@ An OS fingerprint (`nmap -O --osscan-guess`, best-effort) is included in
 the report for context, since OS/crypto-library version is often the
 actual blocker behind a PLANNING REQUIRED or LEGACY result.
 
+## GitHub repo secret scan
+
+Prompts for a GitHub repo URL (its own prompt — separate from the
+domain/IP `get_target()` used by every other option) and runs it through
+[gitleaks](https://github.com/gitleaks/gitleaks) and
+[TruffleHog](https://github.com/trufflesecurity/trufflehog) to find leaked
+API keys, tokens, passwords, and other credentials.
+
+**How it works**: the repo is cloned with full history (not `--depth 1` —
+a secret removed in a later commit is still recoverable from history) into
+a scratch directory, gitleaks and TruffleHog are both run against that
+clone, and their findings are merged: entries both tools flag for the same
+`(file, line, secret)` are deduped into one row. TruffleHog's own
+credential **verification** (it checks whether a found key still works
+against the provider's live API) is the strongest signal available, so a
+verified-live secret is always classified **High** regardless of type;
+everything else is bucketed into High/Medium/Low by matching the rule
+name against hint lists (cloud/private keys/DB connection strings → High,
+other tokens/API keys/passwords → Medium, everything else → Low) — see
+`classify_severity()`. This is a heuristic, not a guarantee: an unusual
+rule name that doesn't match either hint list falls through to Low.
+
+**Output**: unlike every other option in this script, nothing here is teed
+to a log file under `~/audit_logs/` — the terminal only shows staged
+progress (`[1/4] Cloning... [2/4] gitleaks... [3/4] trufflehog...
+[4/4] Building report...`) followed by a color-coded High/Medium/Low
+summary. This is deliberate: the tools' raw output contains **unmasked**
+secrets, so persisting it anywhere would quietly leave live credentials
+sitting in plaintext on disk indefinitely — exactly what this option
+exists to flag elsewhere, not create here. A combined report is then
+written to `/tmp/Trufflehog_Sweep_<date>.csv` and `.xlsx` (color-coded by
+severity in the spreadsheet too) — secret values are masked in both
+(`AKIA************WXYZ`) so even the report can't leak the live value.
+
+**Cleanup**: everything the scan generates — the clone, gitleaks'
+`_gitleaks_report.json`, TruffleHog's own scan state — lives under one
+scratch directory (`tempfile.mkdtemp()`), which `cleanup_scratch_dir()`
+removes in a `finally` block regardless of whether the scan succeeded,
+failed, or was interrupted (`Ctrl+C`). Git repos sometimes leave read-only
+pack files under `.git/objects/` that a plain `rmtree` can't delete;
+cleanup retries those with a forced `chmod` before giving up, and if
+anything still survives it prints the leftover path so it can be removed
+by hand rather than silently leaving it behind. The only things meant to
+survive a scan are the masked `/tmp/` reports.
+
+This covers every exit path Python itself can observe. A hard kill
+(`SIGKILL`, e.g. `kill -9`) or a power loss can't be caught by any
+`try`/`finally` in any language, so in that specific case gitleaks' own
+unmasked `_gitleaks_report.json` (written inside the scratch clone before
+this script ever reads it back) could survive under the OS temp directory
+until something else cleans it up. Worth knowing if this is ever run
+somewhere that gets killed hard mid-scan rather than stopped normally.
+
+One thing outside this script's control: TruffleHog manages its own
+internal scratch state for a `git` source independently of the clone this
+script hands it, and is expected to clean that up itself — if the process
+is killed hard enough mid-scan that TruffleHog can't finish its own
+cleanup, a stray `trufflehog-*` temp path could in principle survive
+under the system temp dir. That would be TruffleHog's own behavior, not
+this script's.
+
+**Public repos only for now** — there's no private-repo authentication
+wired up (no SSH-agent or `GITHUB_TOKEN` handling); cloning a private repo
+will just fail with a clear error pointing at that.
+
 ## Requirements
 
 This script assumes a fully-provisioned Kali-style box — most options
@@ -120,8 +188,15 @@ with a warning if missing, not fatal): `testssl`, `httpx`, `nxc`
 only — its Debian/Kali install path (`/usr/games/lolcat`) is checked
 directly since sudo's `secure_path` commonly drops `/usr/games` from PATH.
 
-Python 3 standard library only — no `pip install` needed for the script
-itself (`pty`, so Linux/macOS only; no Windows support).
+The GitHub secret scan option requires `git`, `gitleaks`, and `trufflehog`
+on PATH — checked up front with `tool_available()` and aborted (not
+skipped) if any are missing, since it's the only thing that option does.
+
+Python 3 standard library only for the rest of the script — no `pip
+install` needed (`pty`, so Linux/macOS only; no Windows support). The
+secret-scan report's `.xlsx` output needs `openpyxl`; if it's not
+installed, the option still writes the `.csv` and prints a warning instead
+of failing outright.
 
 ## Usage
 
