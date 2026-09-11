@@ -110,9 +110,12 @@ API keys, tokens, passwords, and other credentials.
 **How it works**: the repo is cloned with full history (not `--depth 1` —
 a secret removed in a later commit is still recoverable from history) into
 a scratch directory, gitleaks and TruffleHog are both run against that
-clone, and their findings are merged: entries both tools flag for the same
-`(file, line, secret)` are deduped into one row. TruffleHog's own
-credential **verification** (it checks whether a found key still works
+clone, and their findings are merged: entries at the same file+line whose
+secret text overlaps (one contains the other — gitleaks' regex match can
+include surrounding quotes/prefix context that TruffleHog's tighter token
+extraction doesn't, so an exact-string match under-merged real duplicates)
+are deduped into one row via `dedupe_findings()`/`_secrets_overlap()`.
+TruffleHog's own credential **verification** (it checks whether a found key still works
 against the provider's live API) is the strongest signal available, so a
 verified-live secret is always classified **High** regardless of type;
 everything else is bucketed into High/Medium/Low by matching the rule
@@ -211,12 +214,15 @@ It's meant to be installed as `/usr/local/bin/audit` and run from
 wherever the shell happens to be — hence logs go under
 `~/audit_logs/<target>/`, not relative to the current working directory.
 
-Set a target, then pick options from the menu; the target persists until
-changed with `t`:
+Picking any numbered option prompts for a target the first time (`t` sets
+or changes it explicitly); every option after that reuses it until `t` is
+used again:
 
 ```
-Enter a domain (or IP): example.com
-[*] Target set to example.com (logs -> /home/user/audit_logs/example.com)
+################################################################
+#   audit.py - A small collection of Keysight Auditing Tools   #
+#   Ver: 0.8 - Author: CM                                      #
+################################################################
 
 -- Recon --
   1) Port audit ................ superfast port/service scanner
@@ -242,6 +248,16 @@ Enter a domain (or IP): example.com
 -- Options --
 t) Set/change target (current: (not set))
 q) Exit
+
+Choose an option: 1
+Enter a domain (or IP): example.com
+[*] Target set to example.com (logs -> /home/user/audit_logs/example.com)
+```
+
+The menu's `t)` line then reads `(current: example.com)` on every
+subsequent redraw, and option 11 (GitHub secret scan) is the one exception
+— it prompts for its own GitHub URL each time instead of using this
+domain/IP target, since a repo URL isn't a network target.
 
 Root/sudo is only requested for the raw-socket / privileged tools (nmap
 scans that need it, masscan, low-level SMB probes) via `sudo_wrap()` — and
@@ -325,15 +341,40 @@ PQ confirmation either way.
 (menu selection + `input()` for the target); there's no way to script a
 single audit option from the command line without going through the menu.
 
+**GitHub secret scan is the one option not tied to `/data/scripts/...` or
+any Kali-specific tool path** — it only needs `git`, `gitleaks`, and
+`trufflehog` on PATH, so it's the most portable option in the menu, but
+it's also the only one with no private-repo support (see above).
+
 ## Verification
 
-This README and pass were produced from a full read-through of the
-script's logic (menu wiring, `run()`/`capture()`/`LineLogger` streaming
-and logging paths, the PQC classification logic for TLS and SSH, and the
-absolute-path/tool-availability assumptions) — it has not been
-independently re-executed against a live target as part of this pass.
-The script's own changelog (v0.7, 2026-08-31) already documents a prior
-security/integrity hardening pass (a shell-injection spot in `ssl_audit`'s
-`openssl | egrep` pipe, inconsistent sudo usage, a stray loop-variable
-name, and a subprocess handle left open) fixed before this README was
-written.
+The script is currently at **v0.8** (2026-09-11) — see the changelog block
+at the top of `audit.py` for the full history. The two most recent passes:
+
+- **Adding the GitHub secret scan** (option 11) plus reformatting every
+  menu label into the dot-leader style shown above, and fixing the
+  printed banner's version number, which had drifted out of sync with the
+  file's own version comment.
+- **A follow-up multi-dimension error/consistency review** across syntax,
+  menu/version consistency, secret-handling security, and the secret-scan
+  feature's edge cases, with each candidate finding adversarially checked
+  before being fixed. That pass found and fixed three real bugs:
+  `ssl_audit()`'s direct `openssl | egrep` pipe had no error handling
+  (unlike everything routed through `run()`/`capture()`) and could crash
+  the whole menu if either tool was missing; `mask_secret()`'s fixed
+  4-char-per-side reveal window barely masked secrets in the 9-16
+  character range; and `dedupe_findings()` required an exact secret-text
+  match, so real duplicates between gitleaks and TruffleHog were
+  under-merging (see the dedupe fix described above).
+
+**What's been verified**: the script compiles cleanly (`python -m
+py_compile`), the pure logic functions (`classify_severity`,
+`mask_secret`, `dedupe_findings`, `run_gitleaks`/`run_trufflehog`'s JSON
+parsing, `cleanup_scratch_dir`) pass a unit-test suite covering the bugs
+above as regression cases, and the menu renders exactly as shown in this
+README. **What hasn't been re-verified**: none of this has been run
+against a live target or a real repo with the actual external binaries
+(`nmap`, `masscan`, `gitleaks`, `trufflehog`, etc.) — this script is
+Linux/Kali-only and was authored/tested on a machine that can't run it
+directly. Before relying on any option (especially a newly-changed one)
+during an engagement, run it once against a known-good target first.
