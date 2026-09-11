@@ -519,7 +519,7 @@ def smb_enum():
 ############QUANTUM READINESS AUDIT###########
 ##############################################
 #
-# Categories (internal Keysight framework, defined by the operator - see disclaimer at the
+# Categories (internal Company framework, defined by the operator - see disclaimer at the
 # end of the report):
 #   READY             - hybrid or post-quantum key exchange actually negotiated
 #   CAPABLE           - PQ/hybrid support is advertised but wasn't the one negotiated
@@ -692,7 +692,7 @@ def quantum_check():
 
     print_qr_legend()
 
-    print(CYAN + "Note: READY / CAPABLE / PLANNING REQUIRED / LEGACY are an internal Keysight "
+    print(CYAN + "Note: READY / CAPABLE / PLANNING REQUIRED / LEGACY are an internal company "
                   "assessment framework used for this audit only - this is not an official NIST "
                   "PQC certification or endorsement." + NORMAL)
     print("")
@@ -1063,7 +1063,7 @@ _MENU_NAME_WIDTH = max(len(name) for _, items in CATEGORIES for _, name, _, _ in
 def print_menu():
     print(YELLOW)
     print("################################################################")
-    print("#   audit.py - A small collection of Keysight Auditing Tools   #")
+    print("#   audit.py - A small collection of useful Auditing Tools     #")
     print("#   Ver: 0.8 - Author: CM                                      #")
     print("################################################################")
     print(NORMAL)
