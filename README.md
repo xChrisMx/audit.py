@@ -345,36 +345,3 @@ single audit option from the command line without going through the menu.
 any Kali-specific tool path** — it only needs `git`, `gitleaks`, and
 `trufflehog` on PATH, so it's the most portable option in the menu, but
 it's also the only one with no private-repo support (see above).
-
-## Verification
-
-The script is currently at **v0.8** (2026-09-11) — see the changelog block
-at the top of `audit.py` for the full history. The two most recent passes:
-
-- **Adding the GitHub secret scan** (option 11) plus reformatting every
-  menu label into the dot-leader style shown above, and fixing the
-  printed banner's version number, which had drifted out of sync with the
-  file's own version comment.
-- **A follow-up multi-dimension error/consistency review** across syntax,
-  menu/version consistency, secret-handling security, and the secret-scan
-  feature's edge cases, with each candidate finding adversarially checked
-  before being fixed. That pass found and fixed three real bugs:
-  `ssl_audit()`'s direct `openssl | egrep` pipe had no error handling
-  (unlike everything routed through `run()`/`capture()`) and could crash
-  the whole menu if either tool was missing; `mask_secret()`'s fixed
-  4-char-per-side reveal window barely masked secrets in the 9-16
-  character range; and `dedupe_findings()` required an exact secret-text
-  match, so real duplicates between gitleaks and TruffleHog were
-  under-merging (see the dedupe fix described above).
-
-**What's been verified**: the script compiles cleanly (`python -m
-py_compile`), the pure logic functions (`classify_severity`,
-`mask_secret`, `dedupe_findings`, `run_gitleaks`/`run_trufflehog`'s JSON
-parsing, `cleanup_scratch_dir`) pass a unit-test suite covering the bugs
-above as regression cases, and the menu renders exactly as shown in this
-README. **What hasn't been re-verified**: none of this has been run
-against a live target or a real repo with the actual external binaries
-(`nmap`, `masscan`, `gitleaks`, `trufflehog`, etc.) — this script is
-Linux/Kali-only and was authored/tested on a machine that can't run it
-directly. Before relying on any option (especially a newly-changed one)
-during an engagement, run it once against a known-good target first.
