@@ -291,30 +291,6 @@ If the log directory can't be created (e.g. permissions), the run
 continues without logging — target selection doesn't fail, only the
 tee-to-disk step is skipped, with a warning printed at that point.
 
-## Architecture notes
-
-**One target, reused everywhere.** `get_target()`/`set_target()` hold a
-single global target + log directory, set on first use and reused by
-every subsequent option — replacing an earlier pattern (per the changelog)
-of re-prompting for a target on every single menu choice.
-
-**`run()` vs `capture()`.** `run()` is for the main menu options: live
-pty streaming + logging, used when a human is meant to watch the tool
-work. `capture()` is for the quantum-readiness audit's many small
-probe connections (one openssl call per candidate PQ group, per protocol)
-where streaming/logging every single throwaway connection attempt would
-just be noise — it returns `(returncode, combined_output)` and nothing
-else.
-
-**Both catch a broad `OSError`, not just missing-binary cases** — a
-helper script that exists but isn't executable (a permissions issue, not
-a missing tool) raises `OSError` too, and the menu should report that and
-move on rather than crash the whole session over one broken option.
-
-**Per-target-run isolation.** Each `run()` call opens/closes its own pty
-pair and log file; a subprocess crashing or a permission error on one
-option doesn't affect the state of any other.
-
 ## Limitations
 
 **Several options are hard-tied to `/data/scripts/...` absolute paths**
