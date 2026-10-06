@@ -10,7 +10,8 @@
 #         chmod +x audit.py
 #         ./audit.py
 #
-# Version: v. 0.8 - added GitHub repo secret scan (gitleaks + trufflehog) - 09/11/2026
+# Version: v. 0.9 - fixed a false "LEGACY" verdict for RDP in the quantum-readiness audit - 10/06/2026
+#          v. 0.8 - added GitHub repo secret scan (gitleaks + trufflehog) - 09/11/2026
 #          v. 0.7 - security/integrity hardening pass - 08/31/2026
 #          v. 0.6 - added PQC/quantum-readiness audit, per-target logging, menu rewrite - 08/31/2026
 #          v. 0.5 - added SQL audit support - 7/2/2025
@@ -23,7 +24,22 @@
 #         2. Never use this script just for curiosity/irresponsibly. Reason should be legitimate.
 #         3. Script can be noisy on some options (crawling, SQLMap). Scope before you run.
 #
-# Changes: 09/11/2026 (v0.8) - Added a "Source Code" menu category with a GitHub repo secret
+# Changes: 10/06/2026 (v0.9) - Fixed quantum_check()'s RDP (3389) branch reporting a false
+#                       "LEGACY" verdict when the port was simply closed/filtered: it only
+#                       checked whether testssl's output contained "TLS1" and defaulted to
+#                       LEGACY otherwise, which is also what a connection-refused/no-response
+#                       failure looks like. Added tcp_probe() - a plain TCP reachability check
+#                       independent of any wrapped tool's output - and the RDP branch now
+#                       reports UNREACHABLE immediately if the port doesn't answer, before ever
+#                       invoking testssl. Standardized every UNREACHABLE row in the
+#                       quantum-readiness report (previously a bare "-") on one phrase via
+#                       unreachable_detail(port): "port <N> closed/filtered" - deliberately a
+#                       hedge rather than asserting refused-vs-timed-out, since a quick probe
+#                       through a firewall can't reliably tell those apart. (An earlier pass of
+#                       this same fix tried distinguishing closed/refused from filtered/timed-out
+#                       per protocol via connect() errno codes and nmap's port-state line - reverted
+#                       in favor of the simpler uniform hedge per explicit feedback.)
+#          09/11/2026 (v0.8) - Added a "Source Code" menu category with a GitHub repo secret
 #                       scan (option 11): clones a public repo (full history - a secret removed
 #                       in a later commit is still recoverable from history), runs gitleaks and
 #                       trufflehog (TruffleHog's live-credential verification is the main signal
@@ -82,6 +98,7 @@ import pty
 import re
 import select
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -186,6 +203,24 @@ def lolcat_cmd():
     check PATH first, then fall back to the known install location before giving up."""
     path = shutil.which("lolcat") or ("/usr/games/lolcat" if os.path.exists("/usr/games/lolcat") else None)
     return f"{path} -a -d 40" if path else None
+
+
+def tcp_probe(host, port, timeout=3):
+    """Plain TCP reachability check, independent of whatever a wrapped tool's output says -
+    a closed/filtered port should never be classified off of a scan tool's failure message."""
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def unreachable_detail(port):
+    """Single source of truth for how every UNREACHABLE row in the quantum-readiness report
+    phrases "nothing answered here" - deliberately a closed/filtered hedge rather than a
+    confident claim either way, since a quick probe through a firewall can't reliably tell a
+    real refusal apart from a silently dropped packet."""
+    return f"port {port} closed/filtered"
 
 
 def sudo_wrap(cmd):
@@ -519,7 +554,7 @@ def smb_enum():
 ############QUANTUM READINESS AUDIT###########
 ##############################################
 #
-# Categories (internal Company framework, defined by the operator - see disclaimer at the
+# Categories (internal Keysight framework, defined by the operator - see disclaimer at the
 # end of the report):
 #   READY             - hybrid or post-quantum key exchange actually negotiated
 #   CAPABLE           - PQ/hybrid support is advertised but wasn't the one negotiated
@@ -548,7 +583,7 @@ def tls_pq_probe(name, host, port, starttls):
     # Reachability check up front so an unreachable host doesn't cost us one timeout per PQ group.
     rc, out = capture(base, timeout=6)
     if rc is None or ("CONNECTED" not in out and "errno" in out.lower()):
-        return name, "UNREACHABLE", None
+        return name, "UNREACHABLE", unreachable_detail(port)
     if not re.search(r"TLSv1\.3", out):
         if re.search(r"SSLv2|SSLv3|TLSv1\.0|TLSv1\.1|RC4|NULL-|EXPORT", out, re.I):
             return name, "LEGACY", "weak protocol/cipher negotiated, no TLS1.3"
@@ -570,7 +605,7 @@ def tls_pq_probe(name, host, port, starttls):
 def ssh_pq_probe(host):
     rc, algos_out = capture(["nmap", "-p", "22", "--script", "ssh2-enum-algos", host], timeout=15)
     if rc is None or "kex_algorithms" not in algos_out.lower():
-        return "UNREACHABLE", None
+        return "UNREACHABLE", unreachable_detail(22)
 
     offered_pq = [a for a in SSH_PQ_KEX if a in algos_out]
     offered_legacy_only = all(kex in algos_out for kex in SSH_LEGACY_KEX) if not offered_pq else False
@@ -671,7 +706,11 @@ def quantum_check():
 
     print(YELLOW + f"RDP (3389): TLS is wrapped behind an RDP connection preamble, so it can't be "
                     f"probed with openssl directly. Best-effort only." + NORMAL)
-    if tool_available("testssl"):
+    if not tcp_probe(domain, 3389):
+        # Check reachability ourselves first - testssl's failure output for a closed/filtered
+        # port doesn't reliably contain "TLS1", which used to fall through to a false "LEGACY".
+        rows.append(("RDP (3389)", "UNREACHABLE", unreachable_detail(3389)))
+    elif tool_available("testssl"):
         rc, out = capture(["testssl", "--quiet", "-t", "rdp", f"{domain}:3389"], timeout=20)
         if rc is None:
             rows.append(("RDP (3389)", "UNREACHABLE", "testssl has no RDP support in this build"))
@@ -692,7 +731,7 @@ def quantum_check():
 
     print_qr_legend()
 
-    print(CYAN + "Note: READY / CAPABLE / PLANNING REQUIRED / LEGACY are an internal company "
+    print(CYAN + "Note: READY / CAPABLE / PLANNING REQUIRED / LEGACY are an internal Keysight "
                   "assessment framework used for this audit only - this is not an official NIST "
                   "PQC certification or endorsement." + NORMAL)
     print("")
@@ -1063,8 +1102,8 @@ _MENU_NAME_WIDTH = max(len(name) for _, items in CATEGORIES for _, name, _, _ in
 def print_menu():
     print(YELLOW)
     print("################################################################")
-    print("#   audit.py - A small collection of useful Auditing Tools     #")
-    print("#   Ver: 0.8 - Author: CM                                      #")
+    print("#   audit.py - A small collection of Keysight Auditing Tools   #")
+    print("#   Ver: 0.9 - Author: CM                                      #")
     print("################################################################")
     print(NORMAL)
     target = _current_target or "(not set)"
